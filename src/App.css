@@ -309,10 +309,10 @@ body {
   text-align: center;
   line-height: 1.15;
   animation: wordSlide 0.15s ease;
-  white-space: nowrap;   /* prevent wrapping so auto-resize can measure */
   max-width: 100%;
   display: block;
   transition: font-size 0.1s ease;
+  word-wrap: anywhere;
 }
 @keyframes wordSlide {
   from { opacity: 0.35; transform: translateY(5px); }
