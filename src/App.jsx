@@ -30,24 +30,6 @@ const BODY_SIZES = [
 // ─── Colour themes ────────────────────────────────────────────────
 const THEMES = [
   {
-    id: 'warm', label: 'Warm', swatch: '#efe8dd',
-    vars: {
-      '--bg':             '#f7f3ed',
-      '--surface':        '#efe8dd',
-      '--surface2':       '#e5ddd2',
-      '--border':         '#d9cec2',
-      '--ink':            '#2c2416',
-      '--ink-mid':        '#5a4f42',
-      '--ink-light':      '#9e8e7e',
-      '--accent':         '#c8823a',
-      '--accent-soft':    '#e8a85a',
-      '--accent-pale':    '#f5ddb8',
-      '--highlight':      'rgba(200,130,58,0.28)',
-      '--highlight-line': 'rgba(200,130,58,0.75)',
-      '--textarea-bg':    '#ffffff',
-    },
-  },
-  {
     id: 'dark', label: 'Dark', swatch: '#1e1e24',
     vars: {
       '--bg':             '#141418',
@@ -81,6 +63,42 @@ const THEMES = [
       '--highlight':      'rgba(212,146,74,0.2)',
       '--highlight-line': 'rgba(212,146,74,0.65)',
       '--textarea-bg':    '#000000',
+    },
+  },
+  {
+    id: 'light', label: 'Light', swatch: '#f0f0f0',
+    vars: {
+      '--bg':             '#f0f0f0',
+      '--surface':        '#e3e3e3',
+      '--surface2':       '#d8d8d8',
+      '--border':         '#c0c0c0',
+      '--ink':            '#0a0a0a',
+      '--ink-mid':        '#2a2a2a',
+      '--ink-light':      '#7a7a7a',
+      '--accent':         '#a05c10',
+      '--accent-soft':    '#c07830',
+      '--accent-pale':    '#eedcb8',
+      '--highlight':      'rgba(160,92,16,0.15)',
+      '--highlight-line': 'rgba(160,92,16,0.6)',
+      '--textarea-bg':    'rgba(0,0,0,0.07)',
+    },
+  },
+  {
+    id: 'warm', label: 'Warm', swatch: '#efe8dd',
+    vars: {
+      '--bg':             '#f7f3ed',
+      '--surface':        '#efe8dd',
+      '--surface2':       '#e5ddd2',
+      '--border':         '#d9cec2',
+      '--ink':            '#2c2416',
+      '--ink-mid':        '#5a4f42',
+      '--ink-light':      '#9e8e7e',
+      '--accent':         '#c8823a',
+      '--accent-soft':    '#e8a85a',
+      '--accent-pale':    '#f5ddb8',
+      '--highlight':      'rgba(200,130,58,0.28)',
+      '--highlight-line': 'rgba(200,130,58,0.75)',
+      '--textarea-bg':    '#ffffff',
     },
   },
   {
@@ -128,14 +146,14 @@ function findTokenOffset(text, tokenIndex) {
 
 // ─── App ─────────────────────────────────────────────────────────
 export default function App() {
-  const [text, setText]                 = useState("The quick brown fox jumps over the lazy dog. Reading word by word can really help keep your place on the page, especially when letters seem to swim around!")
+  const [text, setText]                 = useState("Hello! Paste a paragraph in the text field, and use the buttons or arrow keys to scroll through the text. Don't forget to check out the customization options in the top left!")
   const [currentIndex, setCurrentIndex] = useState(0)
   const [hidePunct, setHidePunct]       = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [fontId, setFontId]             = useState('lexend')
   const [focusSizeIdx, setFocusSizeIdx] = useState(1)   // M
   const [bodySizeIdx, setBodySizeIdx]   = useState(1)   // M
-  const [themeId, setThemeId]           = useState('warm')
+  const [themeId, setThemeId]           = useState('dark')
 
   const textareaRef  = useRef(null)
   const settingsRef  = useRef(null)
