@@ -3,15 +3,14 @@ import './App.css'
 
 // ─── Fonts ───────────────────────────────────────────────────────
 const FONTS = [
-  { id: 'lexend',       label: 'Lexend',               family: "'Lexend', sans-serif",                tag: 'dyslexia' },
-  { id: 'atkinson',    label: 'Atkinson Hyperlegible', family: "'Atkinson Hyperlegible', sans-serif", tag: 'dyslexia' },
-  { id: 'opendyslexic', label: 'OpenDyslexic',         family: "'OpenDyslexic', sans-serif",          tag: 'dyslexia' },
-  { id: 'dm-sans',     label: 'DM Sans',               family: "'DM Sans', sans-serif",               tag: 'sans' },
-  { id: 'lora',        label: 'Lora',                  family: "'Lora', Georgia, serif",              tag: 'serif' },
-  { id: 'merriweather', label: 'Merriweather',         family: "'Merriweather', Georgia, serif",      tag: 'serif' },
+  { id: 'lexend',        label: 'Lexend',               family: "'Lexend', sans-serif",                tag: 'dyslexia' },
+  { id: 'atkinson',      label: 'Atkinson Hyperlegible', family: "'Atkinson Hyperlegible', sans-serif", tag: 'dyslexia' },
+  { id: 'opendyslexic',  label: 'OpenDyslexic',          family: "'OpenDyslexic', sans-serif",          tag: 'dyslexia' },
+  { id: 'dm-sans',       label: 'DM Sans',               family: "'DM Sans', sans-serif",               tag: 'sans' },
+  { id: 'lora',          label: 'Lora',                  family: "'Lora', Georgia, serif",              tag: 'serif' },
+  { id: 'merriweather',  label: 'Merriweather',          family: "'Merriweather', Georgia, serif",      tag: 'serif' },
 ]
 
-// ─── Focus word sizes (1.5× progression: ~72, 108, 162, 243) ─────
 const FOCUS_SIZES = [
   { label: 'S',  px: 48  },
   { label: 'M',  px: 72  },
@@ -19,7 +18,6 @@ const FOCUS_SIZES = [
   { label: 'XL', px: 162 },
 ]
 
-// ─── Body text sizes ──────────────────────────────────────────────
 const BODY_SIZES = [
   { label: 'S',  px: 14 },
   { label: 'M',  px: 17 },
@@ -27,7 +25,6 @@ const BODY_SIZES = [
   { label: 'XL', px: 24 },
 ]
 
-// ─── Colour themes ────────────────────────────────────────────────
 const THEMES = [
   {
     id: 'dark', label: 'Dark', swatch: '#1e1e24',
@@ -122,9 +119,33 @@ const THEMES = [
 ]
 
 // ─── Helpers ─────────────────────────────────────────────────────
-function tokenize(text) {
-  if (!text.trim()) return []
-  return text.split(/(\s+)/).filter(c => c.length > 0 && !/^\s+$/.test(c))
+
+/**
+ * Parse text into line-aware structure.
+ * Returns:
+ *   flatWords:  string[]        — every word in order
+ *   lineOf:     number[]        — which line index each flat word belongs to
+ *   lineStart:  number[]        — flat index of first word on each line
+ *   lines:      string[][]      — words grouped by line (empty lines are [])
+ */
+function parseLines(text) {
+  const rawLines = text.split('\n')
+  const flatWords = []
+  const lineOf    = []
+  const lineStart = []
+  const lines     = []
+
+  rawLines.forEach((rawLine, li) => {
+    const words = rawLine.split(/\s+/).filter(w => w.length > 0)
+    lineStart.push(flatWords.length)
+    lines.push(words)
+    words.forEach(w => {
+      lineOf.push(li)
+      flatWords.push(w)
+    })
+  })
+
+  return { flatWords, lineOf, lineStart, lines }
 }
 
 function displayWord(word, hidePunct) {
@@ -146,42 +167,78 @@ function findTokenOffset(text, tokenIndex) {
 
 // ─── App ─────────────────────────────────────────────────────────
 export default function App() {
-  const [text, setText]                 = useState("Hello! Paste a paragraph in the text field, and use the buttons or arrow keys to scroll through the text. Don't forget to check out the customization options in the top left!")
+  const [text, setText]                 = useState("Hello! Paste a paragraph in the text field, and use the buttons or arrow keys to scroll through the text.\nDon't forget to check out the customization options in the top left!")
   const [currentIndex, setCurrentIndex] = useState(0)
   const [hidePunct, setHidePunct]       = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [fontId, setFontId]             = useState('lexend')
-  const [focusSizeIdx, setFocusSizeIdx] = useState(1)   // M
-  const [bodySizeIdx, setBodySizeIdx]   = useState(1)   // M
+  const [focusSizeIdx, setFocusSizeIdx] = useState(1)
+  const [bodySizeIdx, setBodySizeIdx]   = useState(1)
   const [themeId, setThemeId]           = useState('dark')
 
-  const textareaRef  = useRef(null)
-  const settingsRef  = useRef(null)
+  // Animation key increments to retrigger CSS animation on line change
+  const [animKey, setAnimKey]     = useState(0)
+  const [slideDir, setSlideDir]   = useState(null)
+  const [isAnimating, setIsAnimating] = useState(false)
+  const prevLineRef    = useRef(0)
+  const animTimerRef   = useRef(null)
 
-  const words       = tokenize(text)
-  const safeIndex   = Math.min(currentIndex, Math.max(0, words.length - 1))
+  const textareaRef   = useRef(null)
+  const settingsRef   = useRef(null)
+  const scrollerRef   = useRef(null)
+  const activeWordRef = useRef(null)
+
+  const parsed      = parseLines(text)
+  const { flatWords, lineOf, lineStart, lines } = parsed
+  const totalWords  = flatWords.length
+  const safeIndex   = Math.min(currentIndex, Math.max(0, totalWords - 1))
   const activeFont  = FONTS.find(f => f.id === fontId) || FONTS[0]
   const activeTheme = THEMES.find(t => t.id === themeId) || THEMES[0]
   const focusPx     = FOCUS_SIZES[focusSizeIdx].px
   const bodyPx      = BODY_SIZES[bodySizeIdx].px
+  const currentLine = totalWords > 0 ? lineOf[safeIndex] : 0
+  const ink         = activeTheme.vars['--ink']
 
-  // ── Apply theme vars to <html> so html/body background matches ──
+  // Apply theme vars to <html>
   useEffect(() => {
     const root = document.documentElement
     Object.entries(activeTheme.vars).forEach(([k, v]) => root.style.setProperty(k, v))
     root.style.setProperty('--font-active', activeFont.family)
     root.style.setProperty('--focus-size', `${focusPx}px`)
     root.style.setProperty('--body-size', `${bodyPx}px`)
-    // Force bg and ink directly onto body to override any cascade issues
-    const ink = activeTheme.vars['--ink']
-    const bg  = activeTheme.vars['--bg']
     document.body.style.color = ink
-    document.body.style.backgroundColor = bg
-  }, [activeTheme, activeFont, focusPx, bodyPx])
+    document.body.style.backgroundColor = activeTheme.vars['--bg']
+  }, [activeTheme, activeFont, focusPx, bodyPx, ink])
+
+  // Vertical slide when line changes - content updates immediately, animation plays over it
+  useEffect(() => {
+    if (currentLine === prevLineRef.current) return
+    const dir = currentLine > prevLineRef.current ? 'up' : 'down'
+    prevLineRef.current = currentLine
+    setSlideDir(dir)
+    setAnimKey(k => k + 1)
+    setIsAnimating(true)
+    if (animTimerRef.current) clearTimeout(animTimerRef.current)
+    animTimerRef.current = setTimeout(() => {
+      setIsAnimating(false)
+    }, 290)
+    return () => clearTimeout(animTimerRef.current)
+  }, [currentLine])
+
+  // Scroll active word to centre — wait for line transition to finish first
+  useEffect(() => {
+    if (isAnimating) return
+    const scroller = scrollerRef.current
+    const activeEl = activeWordRef.current
+    if (!scroller || !activeEl) return
+    const centre = scroller.clientWidth / 2
+    const wordCentre = activeEl.offsetLeft + activeEl.offsetWidth / 2
+    scroller.scrollLeft = wordCentre - centre
+  }, [safeIndex, currentLine, focusSizeIdx, fontId, text, isAnimating])
 
   const go = useCallback((dir) => {
-    setCurrentIndex(prev => Math.max(0, Math.min(words.length - 1, prev + dir)))
-  }, [words.length])
+    setCurrentIndex(prev => Math.max(0, Math.min(totalWords - 1, prev + dir)))
+  }, [totalWords])
 
   useEffect(() => {
     const handler = (e) => {
@@ -202,13 +259,25 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    setCurrentIndex(prev => Math.min(prev, Math.max(0, tokenize(text).length - 1)))
+    const newTotal = parseLines(text).flatWords.length
+    setCurrentIndex(prev => Math.min(prev, Math.max(0, newTotal - 1)))
   }, [text])
 
-  const offset        = findTokenOffset(text, safeIndex)
-  const displayedWord = displayWord(words[safeIndex] || '', hidePunct)
-  const isFirst       = safeIndex === 0
-  const isLast        = safeIndex >= words.length - 1
+  const offset  = findTokenOffset(text, safeIndex)
+  const isFirst = safeIndex === 0
+  const isLast  = safeIndex >= totalWords - 1
+
+  // Always render currentLine's words immediately
+  const renderedLineWords = (lines[currentLine] || []).map((w, wi) => ({
+    word: w,
+    flatIdx: lineStart[currentLine] + wi,
+  }))
+
+  const activeWordInLine = safeIndex - lineStart[currentLine]
+
+  const slideClass = slideDir === 'up'   ? 'strip-sliding-up'
+                   : slideDir === 'down' ? 'strip-sliding-down'
+                   : ''
 
   return (
     <div className="app">
@@ -297,60 +366,63 @@ export default function App() {
         )}
       </div>
 
-      {/* ── Focus bar ── */}
-      {words.length > 0 && (
-        <div className="focus-bar">
-          <button className="nav-btn nav-btn--side" onClick={() => go(-1)} disabled={isFirst} aria-label="Previous word">
-            <ChevronLeft />
-          </button>
+      {/* ── Word strip ── */}
+      {totalWords > 0 && (
+        <div className="word-strip-wrap">
+          <div className="strip-fade strip-fade--left" />
+          <div className="strip-fade strip-fade--right" />
 
-          <div className="focus-word-wrap">
-            <div className="focus-progress">
-              <div className="focus-progress-fill"
-                style={{ width: words.length > 1 ? `${(safeIndex / (words.length - 1)) * 100}%` : '100%' }} />
-            </div>
+          <div className="strip-progress">
+            <div className="strip-progress-fill"
+              style={{ width: totalWords > 1 ? `${(safeIndex / (totalWords - 1)) * 100}%` : '100%' }} />
+          </div>
 
-            <div
-              className="focus-word"
-              key={`${safeIndex}-${focusSizeIdx}-${fontId}`}
-              style={{ fontSize: `${focusPx}px`, color: activeTheme.vars['--ink'] }}
-            >
-              {displayedWord || '—'}
-            </div>
-
-            <div className="focus-counter">{safeIndex + 1} / {words.length}</div>
-
-            {/* Mobile buttons */}
-            <div className="nav-row--mobile">
-              <button className="nav-btn nav-btn--mobile" onClick={() => go(-1)} disabled={isFirst} aria-label="Previous word">
-                <ChevronLeft />
-              </button>
-              <button className="nav-btn nav-btn--mobile" onClick={() => go(1)} disabled={isLast} aria-label="Next word">
-                <ChevronRight />
-              </button>
+          {/* clipping window — clips the vertical slide */}
+          <div className="strip-clip">
+            <div key={animKey} className={`word-strip ${slideClass}`} ref={scrollerRef}>
+              {renderedLineWords.map(({ word, flatIdx }, wi) => {
+                const isActive = wi === activeWordInLine
+                return (
+                  <span
+                    key={wi}
+                    ref={isActive ? activeWordRef : null}
+                    className={`strip-word ${isActive ? 'strip-word--active' : ''}`}
+                    style={{ fontSize: `${focusPx}px`, fontFamily: activeFont.family, color: ink }}
+                    onClick={() => setCurrentIndex(flatIdx)}
+                  >
+                    {displayWord(word, hidePunct)}
+                  </span>
+                )
+              })}
             </div>
           </div>
 
-          <button className="nav-btn nav-btn--side" onClick={() => go(1)} disabled={isLast} aria-label="Next word">
-            <ChevronRight />
-          </button>
+          <div className="strip-footer">
+            <button className="nav-btn nav-btn--strip" onClick={() => go(-1)} disabled={isFirst} aria-label="Previous word">
+              <ChevronLeft />
+            </button>
+            <span className="focus-counter">{safeIndex + 1} / {totalWords}</span>
+            <button className="nav-btn nav-btn--strip" onClick={() => go(1)} disabled={isLast} aria-label="Next word">
+              <ChevronRight />
+            </button>
+          </div>
         </div>
       )}
 
       {/* ── Editor ── */}
       <div className="editor-wrap">
         <div className="editor-hint">
-          {words.length === 0 ? 'Start typing to begin…' : 'Use ← → arrow keys or the buttons to navigate'}
+          {totalWords === 0 ? 'Start typing to begin…' : 'Use ← → arrow keys or the buttons to navigate'}
         </div>
         <div className="textarea-container">
-          <HighlightedTextarea text={text} offset={offset} onChange={setText} textareaRef={textareaRef} inkColor={activeTheme.vars['--ink']} />
+          <HighlightedTextarea text={text} offset={offset} onChange={setText} textareaRef={textareaRef} inkColor={ink} />
         </div>
       </div>
     </div>
   )
 }
 
-// ─── Toggle component ─────────────────────────────────────────────
+// ─── Toggle ──────────────────────────────────────────────────────
 function Toggle({ on, onToggle }) {
   return (
     <div className={`toggle ${on ? 'on' : ''}`}
