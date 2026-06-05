@@ -197,6 +197,27 @@ function findChunkOffset(text, wordIdxs) {
   return { start: first.start, end: last.end }
 }
 
+// Given a caret character offset, return the index of the token (word) it falls
+// in or just before. Returns -1 if the caret is past the last token.
+function tokenIndexAtOffset(text, caret) {
+  const tokens = []
+  let i = 0
+  while (i < text.length) {
+    while (i < text.length && /\s/.test(text[i])) i++
+    if (i >= text.length) break
+    const start = i
+    while (i < text.length && !/\s/.test(text[i])) i++
+    tokens.push({ start, end: i })
+  }
+  if (tokens.length === 0) return -1
+  // Past the end of the last token's text → signal "after all characters"
+  if (caret > tokens[tokens.length - 1].end) return -1
+  for (let t = 0; t < tokens.length; t++) {
+    if (caret <= tokens[t].end) return t
+  }
+  return -1
+}
+
 // ─── App ─────────────────────────────────────────────────────────
 const STORAGE_KEY = 'reading-assistant-state'
 const DEFAULT_TEXT = "Hello! Paste a paragraph in the text field, and use the buttons or arrow keys to scroll through the text.\nDon't forget to check out the customization options in the top left!"
@@ -249,6 +270,8 @@ export default function App() {
   const [voices, setVoices]             = useState([])
   const [ttsStatus, setTtsStatus]       = useState('')
   const volRef = useRef(null)
+  const [popoutOpen, setPopoutOpen] = useState(false)
+  const lastPointerType = useRef('mouse')
 
   // Persist settings + pasted text whenever any of them change
   useEffect(() => {
@@ -376,24 +399,69 @@ export default function App() {
     scroller.scrollLeft = wordCentre - centre
   }, [safeIndex, currentLine, focusSizeIdx, fontId, text, isAnimating, wordsPerFocus])
 
-  // Toggle TTS on/off.
-  const toggleTts = useCallback(() => {
-    const willEnable = !ttsOn
-    if (willEnable) {
+  // Speaker button. Behaviour differs by input type:
+  //  Mouse  → click always toggles TTS directly; the popout is purely a hover
+  //           affordance, so it doesn't intercept the click.
+  //  Touch  → no hover, so the popout is an explicit step:
+  //           off → on + open popout; on+open → close popout; on+closed → off.
+  const toggleTts = useCallback((viaTouch) => {
+    if (!ttsOn) {
       if (typeof window === 'undefined' || !window.speechSynthesis) {
         setTtsStatus('Speech synthesis is not supported in this browser.')
         return
       }
       setTtsStatus('')
+      setTtsOn(true)
+      setPopoutOpen(true)   // mouse: we're hovering; touch: explicit open
+      return
+    }
+    // TTS is on
+    if (viaTouch && popoutOpen) {
+      setPopoutOpen(false)        // touch: first tap-after-open dismisses controls
     } else {
       if (window.speechSynthesis) window.speechSynthesis.cancel()
+      setPopoutOpen(false)
+      setTtsOn(false)             // mouse always reaches here; touch when closed
     }
-    setTtsOn(willEnable)
-  }, [ttsOn])
+  }, [ttsOn, popoutOpen])
 
   const go = useCallback((dir) => {
     setCurrentIndex(prev => Math.max(0, Math.min(totalChunks - 1, prev + dir)))
   }, [totalChunks])
+
+  // Reset all settings to defaults and clear persisted state. The pasted text
+  // is kept — this resets preferences, not the user's content.
+  const resetSettings = useCallback(() => {
+    try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
+    setHidePunct(false)
+    setFontId('lexend')
+    setFocusSizeIdx(2)        // M (XS=0, S=1, M=2)
+    setBodySizeIdx(2)         // M
+    setWordsPerFocus(1)
+    setThemeId('dark')
+    setTtsOn(false)
+    setTtsVolume(0.5)
+    setTtsRate(1)
+    setTtsPitch(1)
+    setTtsVoiceURI('')
+    setPopoutOpen(false)
+    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel()
+  }, [])
+
+  // When the user clicks/moves the caret in the textarea, jump the focus
+  // indicator to the chunk containing that caret position. If the caret is
+  // after all characters (e.g. right after a paste, which lands the caret at
+  // the very end), fall back to the start rather than hopping to the end.
+  const moveFocusToCaret = useCallback((caret) => {
+    const tokenIdx = tokenIndexAtOffset(text, caret)
+    if (tokenIdx < 0) {
+      setCurrentIndex(0)
+      return
+    }
+    // Find which chunk contains this flat token index
+    const ci = chunks.findIndex(c => c.wordIdxs.includes(tokenIdx))
+    setCurrentIndex(ci >= 0 ? ci : 0)
+  }, [text, chunks])
 
   useEffect(() => {
     const handler = (e) => {
@@ -408,6 +476,7 @@ export default function App() {
   useEffect(() => {
     const handler = (e) => {
       if (settingsRef.current && !settingsRef.current.contains(e.target)) setSettingsOpen(false)
+      if (volRef.current && !volRef.current.contains(e.target)) setPopoutOpen(false)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -451,7 +520,7 @@ export default function App() {
     <div className="max-w-[740px] mx-auto pt-4 pb-[60px] min-h-screen flex flex-col max-[600px]:pt-3">
 
       {/* ── Header row: buttons left, title right (full-width, in DOM flow) ── */}
-      <div className="w-screen left-1/2 -translate-x-1/2 relative flex items-center justify-between px-[18px] mb-4 max-[600px]:mb-3 z-[999]">
+      <div className="w-screen left-1/2 -translate-x-1/2 relative z-[999] flex items-center justify-between px-[18px] mb-4 max-[600px]:mb-3">
 
         {/* left: settings + tts buttons */}
         <div className="flex items-center gap-2">
@@ -463,8 +532,8 @@ export default function App() {
               onClick={() => setSettingsOpen(v => !v)}
               aria-label="Settings"
             >
-              <span className={`transition-transform duration-300 text-2xl group-hover:rotate-45 group-hover:text-accent ${settingsOpen ? 'rotate-45 text-accent' : ''}`}>
-                ⚙
+              <span className={`transition-transform duration-300 group-hover:rotate-45 group-hover:text-accent ${settingsOpen ? 'rotate-45 text-accent' : ''}`}>
+                <GearIcon />
               </span>
             </button>
 
@@ -508,22 +577,22 @@ export default function App() {
             <Divider />
 
             <SectionLabel>Theme</SectionLabel>
-            <div className="flex gap-2 mb-1.5">
+            <div className="flex gap-1">
               {THEMES.map(t => (
                 <button key={t.id}
-                  className={`w-9 h-9 rounded-full cursor-pointer relative transition-all duration-150 flex items-center justify-center shrink-0 hover:scale-110 ${t.id === themeId ? 'border-[2.5px] border-accent scale-105' : 'border-2 border-brd'}`}
-                  style={{ background: t.swatch }}
                   onClick={() => setThemeId(t.id)}
                   title={t.label}
                   aria-pressed={t.id === themeId}
+                  className="flex flex-col items-center gap-1 flex-1 min-w-0 cursor-pointer group"
                 >
-                  {t.id === themeId && <span className="text-[13px] font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">✓</span>}
+                  <span
+                    className={`w-9 h-9 rounded-full relative transition-all duration-150 flex items-center justify-center group-hover:scale-110 ${t.id === themeId ? 'border-[2.5px] border-accent scale-105' : 'border-2 border-brd'}`}
+                    style={{ background: t.swatch }}
+                  >
+                    {t.id === themeId && <span className="text-[13px] font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">✓</span>}
+                  </span>
+                  <span className={`text-[9px] text-center tracking-[0.04em] truncate w-full ${t.id === themeId ? 'text-accent font-semibold' : 'text-ink-light'}`}>{t.label}</span>
                 </button>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              {THEMES.map(t => (
-                <span key={t.id} className={`flex-1 text-[9px] text-center tracking-[0.04em] truncate ${t.id === themeId ? 'text-accent font-semibold' : 'text-ink-light'}`}>{t.label}</span>
               ))}
             </div>
 
@@ -544,20 +613,32 @@ export default function App() {
               ))}
             </div>
 
+            <Divider />
+
+            <button
+              onClick={resetSettings}
+              className="w-full py-2 rounded-lg border-[1.5px] border-brd bg-bg text-ink-mid font-ui text-xs font-medium cursor-pointer transition-all duration-150 hover:border-accent-soft hover:bg-accent-pale hover:text-accent"
+            >
+              Reset settings
+            </button>
+
           </div>
         )}
       </div>
 
           {/* ── TTS toggle + volume popout ── */}
-          <div className="group relative z-[200]" ref={volRef}>
+          <div className="group relative z-[200]" ref={volRef}
+            onMouseEnter={() => { if (ttsOn && lastPointerType.current === 'mouse') setPopoutOpen(true) }}
+            onMouseLeave={() => { if (lastPointerType.current === 'mouse') setPopoutOpen(false) }}>
             <button
               className={`w-10 h-10 rounded-full border-[1.5px] cursor-pointer flex items-center justify-center transition-all duration-200 shadow-[0_2px_8px_rgba(0,0,0,0.1)] font-ui ${ttsOn ? 'border-accent-soft bg-accent-pale text-accent' : 'border-brd bg-surface text-ink-mid hover:border-accent-soft hover:bg-accent-pale'}`}
-              onClick={toggleTts}
+              onPointerDown={e => { lastPointerType.current = e.pointerType || 'mouse' }}
+              onClick={() => toggleTts(lastPointerType.current !== 'mouse')}
               aria-label={ttsOn ? 'Disable text to speech' : 'Enable text to speech'}
               aria-pressed={ttsOn}
             >
-              <span className="text-xl scale-x-[-1] inline-block leading-none">
-                {ttsOn ? '🕪' : '🕨'}
+              <span className="inline-flex items-center justify-center">
+                {ttsOn ? <SpeakerOnIcon /> : <SpeakerOffIcon />}
               </span>
             </button>
 
@@ -568,9 +649,9 @@ export default function App() {
           </div>
         )}
 
-        {/* When ON: volume slider pops out on hover (no gap so cursor can reach it) */}
-        {ttsOn && (
-          <div className="absolute top-full left-0 pt-2 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
+        {/* When ON: controls popout (open via hover on desktop or tap on touch) */}
+        {ttsOn && popoutOpen && (
+          <div className="absolute top-full left-0 pt-2">
             <div className="bg-surface border-[1.5px] border-brd rounded-xl p-3 shadow-[0_8px_32px_rgba(0,0,0,0.28)] font-ui w-[230px]">
 
               <div className="flex items-center justify-between mb-2.5">
@@ -637,8 +718,8 @@ export default function App() {
       {/* ── Word strip ── */}
       {totalChunks > 0 && (
         <div className="relative w-screen left-1/2 -translate-x-1/2 mb-6 flex flex-col">
-          <div className="absolute top-[3px] bottom-0 left-0 w-[22%] pointer-events-none z-[2] fade-left" />
-          <div className="absolute top-[3px] bottom-0 right-0 w-[22%] pointer-events-none z-[2] fade-right" />
+          <div className="absolute top-[3px] bottom-0 left-0 w-[22%] max-[600px]:w-[12%] pointer-events-none z-[2] fade-left" />
+          <div className="absolute top-[3px] bottom-0 right-0 w-[22%] max-[600px]:w-[12%] pointer-events-none z-[2] fade-right" />
 
           <div className="w-full h-[3px] bg-brd shrink-0">
             <div className="h-full bg-accent rounded-r-sm transition-[width] duration-200 ease-out"
@@ -685,7 +766,7 @@ export default function App() {
           {totalChunks === 0 ? 'Start typing to begin…' : 'Use ← → arrow keys or the buttons to navigate'}
         </div>
         <div className="flex-1 flex flex-col border-[1.5px] border-brd rounded-xl bg-textarea-bg overflow-hidden shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-all duration-200 focus-within:border-accent-soft focus-within:shadow-[0_2px_12px_rgba(0,0,0,0.06),0_0_0_3px_var(--highlight)]">
-          <HighlightedTextarea text={text} offset={offset} onChange={setText} textareaRef={textareaRef} inkColor={ink} />
+          <HighlightedTextarea text={text} offset={offset} onChange={setText} textareaRef={textareaRef} inkColor={ink} onCaretMove={moveFocusToCaret} />
         </div>
       </div>
 
@@ -765,7 +846,7 @@ function Toggle({ on, onToggle }) {
 }
 
 // ─── Highlighted textarea ─────────────────────────────────────────
-function HighlightedTextarea({ text, offset, onChange, textareaRef, inkColor }) {
+function HighlightedTextarea({ text, offset, onChange, textareaRef, inkColor, onCaretMove }) {
   const mirrorRef = useRef(null)
   const [rects, setRects] = useState([])      // highlight rectangles (content coords)
   const [scrollTop, setScrollTop] = useState(0)
@@ -860,6 +941,14 @@ function HighlightedTextarea({ text, offset, onChange, textareaRef, inkColor }) 
         value={text}
         onChange={e => onChange(e.target.value)}
         onScroll={syncScroll}
+        onClick={e => onCaretMove && onCaretMove(e.target.selectionStart)}
+        onKeyUp={e => {
+          // Only react to caret-moving keys, not typing — and never to typing
+          // that changes text (that's handled by onChange and shouldn't hop).
+          if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'].includes(e.key)) {
+            onCaretMove && onCaretMove(e.target.selectionStart)
+          }
+        }}
         spellCheck={true}
         placeholder="Start typing your text here…"
       />
@@ -868,6 +957,32 @@ function HighlightedTextarea({ text, offset, onChange, textareaRef, inkColor }) 
 }
 
 // ─── Icons ───────────────────────────────────────────────────────
+function GearIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  )
+}
+function SpeakerOnIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 9v6h4l5 5V4L7 9H3z" />
+      <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+      <path d="M18.5 5.5a9 9 0 0 1 0 13" />
+    </svg>
+  )
+}
+function SpeakerOffIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 9v6h4l5 5V4L7 9H3z" />
+      <line x1="22" y1="9" x2="16" y2="15" />
+      <line x1="16" y1="9" x2="22" y2="15" />
+    </svg>
+  )
+}
 function ChevronLeft() {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
