@@ -275,89 +275,87 @@ export default function App() {
 
   const activeWordInLine = safeIndex - lineStart[currentLine]
 
-  const slideClass = slideDir === 'up'   ? 'strip-sliding-up'
-                   : slideDir === 'down' ? 'strip-sliding-down'
+  const slideClass = slideDir === 'up'   ? 'animate-slideInUp'
+                   : slideDir === 'down' ? 'animate-slideInDown'
                    : ''
 
   return (
-    <div className="app">
+    <div className="max-w-[740px] mx-auto pt-12 pb-[60px] min-h-screen flex flex-col max-[600px]:pt-5 max-[600px]:pb-10">
 
       {/* ── Settings ── */}
-      <div className="settings-anchor" ref={settingsRef}>
+      <div className="fixed top-[18px] left-[18px] z-[200]" ref={settingsRef}>
         <button
-          className={`settings-btn ${settingsOpen ? 'open' : ''}`}
+          className="group w-10 h-10 rounded-full border-[1.5px] border-brd bg-surface text-ink-mid cursor-pointer flex items-center justify-center transition-all duration-200 shadow-[0_2px_8px_rgba(0,0,0,0.1)] font-ui hover:border-accent-soft hover:bg-accent-pale"
           onClick={() => setSettingsOpen(v => !v)}
           aria-label="Settings"
         >
-          <SettingsIcon />
+          <span className={`transition-transform duration-300 text-2xl group-hover:rotate-45 group-hover:text-accent ${settingsOpen ? 'rotate-45 text-accent' : ''}`}>
+            ⚙
+          </span>
         </button>
 
         {settingsOpen && (
-          <div className="settings-popout">
+          <div className="absolute top-[calc(100%+10px)] left-0 bg-surface border-[1.5px] border-brd rounded-xl p-[16px_18px_18px] w-[260px] shadow-[0_8px_32px_rgba(0,0,0,0.28)] animate-popIn font-ui max-h-[calc(100vh-80px)] overflow-y-auto tiny-scroll max-[600px]:w-[calc(100vw-36px)] max-[600px]:max-w-[320px]">
 
-            <div className="settings-section-label">Display</div>
-            <label className="toggle-row">
+            <SectionLabel>Display</SectionLabel>
+            <label className="flex items-center justify-between gap-3 cursor-pointer text-sm text-ink-mid">
               <span>Hide punctuation</span>
               <Toggle on={hidePunct} onToggle={() => setHidePunct(v => !v)} />
             </label>
 
-            <div className="settings-divider" />
+            <Divider />
 
-            <div className="settings-section-label">Focus word size</div>
-            <div className="size-btns">
+            <SectionLabel>Focus word size</SectionLabel>
+            <div className="flex gap-1.5">
               {FOCUS_SIZES.map((s, i) => (
-                <button key={s.label}
-                  className={`size-btn ${i === focusSizeIdx ? 'active' : ''}`}
-                  onClick={() => setFocusSizeIdx(i)}>{s.label}</button>
+                <SizeButton key={s.label} active={i === focusSizeIdx} onClick={() => setFocusSizeIdx(i)}>{s.label}</SizeButton>
               ))}
             </div>
 
-            <div className="settings-divider" />
+            <Divider />
 
-            <div className="settings-section-label">Body text size</div>
-            <div className="size-btns">
+            <SectionLabel>Body text size</SectionLabel>
+            <div className="flex gap-1.5">
               {BODY_SIZES.map((s, i) => (
-                <button key={s.label}
-                  className={`size-btn ${i === bodySizeIdx ? 'active' : ''}`}
-                  onClick={() => setBodySizeIdx(i)}>{s.label}</button>
+                <SizeButton key={s.label} active={i === bodySizeIdx} onClick={() => setBodySizeIdx(i)}>{s.label}</SizeButton>
               ))}
             </div>
 
-            <div className="settings-divider" />
+            <Divider />
 
-            <div className="settings-section-label">Theme</div>
-            <div className="theme-swatches">
+            <SectionLabel>Theme</SectionLabel>
+            <div className="flex gap-2 mb-1.5">
               {THEMES.map(t => (
                 <button key={t.id}
-                  className={`theme-swatch ${t.id === themeId ? 'active' : ''}`}
+                  className={`w-9 h-9 rounded-full cursor-pointer relative transition-all duration-150 flex items-center justify-center shrink-0 hover:scale-110 ${t.id === themeId ? 'border-[2.5px] border-accent scale-105' : 'border-2 border-brd'}`}
                   style={{ background: t.swatch }}
                   onClick={() => setThemeId(t.id)}
                   title={t.label}
                   aria-pressed={t.id === themeId}
                 >
-                  {t.id === themeId && <span className="theme-check">✓</span>}
+                  {t.id === themeId && <span className="text-[13px] font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">✓</span>}
                 </button>
               ))}
             </div>
-            <div className="theme-label-row">
+            <div className="flex gap-2">
               {THEMES.map(t => (
-                <span key={t.id} className={`theme-label ${t.id === themeId ? 'active' : ''}`}>{t.label}</span>
+                <span key={t.id} className={`flex-1 text-[9px] text-center tracking-[0.04em] truncate ${t.id === themeId ? 'text-accent font-semibold' : 'text-ink-light'}`}>{t.label}</span>
               ))}
             </div>
 
-            <div className="settings-divider" />
+            <Divider />
 
-            <div className="settings-section-label">Font</div>
-            <div className="font-list">
+            <SectionLabel>Font</SectionLabel>
+            <div className="flex flex-col gap-1">
               {FONTS.map(f => (
                 <button key={f.id}
-                  className={`font-btn ${f.id === fontId ? 'active' : ''}`}
+                  className={`flex items-center justify-between w-full px-2.5 py-2 rounded-lg cursor-pointer transition-all duration-150 text-left gap-2 border-[1.5px] ${f.id === fontId ? 'bg-accent-pale border-accent-soft' : 'border-transparent hover:bg-surface2 hover:border-brd'}`}
                   onClick={() => setFontId(f.id)}
                   style={{ fontFamily: f.family }}
                   aria-pressed={f.id === fontId}
                 >
-                  <span className="font-btn-name">{f.label}</span>
-                  {f.tag === 'dyslexia' && <span className="font-tag">✦ dyslexia</span>}
+                  <span className="text-sm text-ink leading-tight">{f.label}</span>
+                  {f.tag === 'dyslexia' && <span className="font-ui text-[9px] font-medium tracking-[0.06em] text-accent bg-accent-pale rounded px-[5px] py-0.5 whitespace-nowrap shrink-0">✦ dyslexia</span>}
                 </button>
               ))}
             </div>
@@ -368,25 +366,26 @@ export default function App() {
 
       {/* ── Word strip ── */}
       {totalWords > 0 && (
-        <div className="word-strip-wrap">
-          <div className="strip-fade strip-fade--left" />
-          <div className="strip-fade strip-fade--right" />
+        <div className="relative w-screen left-1/2 -translate-x-1/2 mb-6 flex flex-col">
+          <div className="absolute top-[3px] bottom-0 left-0 w-[22%] pointer-events-none z-[2] fade-left" />
+          <div className="absolute top-[3px] bottom-0 right-0 w-[22%] pointer-events-none z-[2] fade-right" />
 
-          <div className="strip-progress">
-            <div className="strip-progress-fill"
+          <div className="w-full h-[3px] bg-brd shrink-0">
+            <div className="h-full bg-accent rounded-r-sm transition-[width] duration-200 ease-out"
               style={{ width: totalWords > 1 ? `${(safeIndex / (totalWords - 1)) * 100}%` : '100%' }} />
           </div>
 
           {/* clipping window — clips the vertical slide */}
-          <div className="strip-clip">
-            <div key={animKey} className={`word-strip ${slideClass}`} ref={scrollerRef}>
+          <div className="overflow-hidden">
+            <div key={animKey} ref={scrollerRef}
+              className={`flex flex-row items-center gap-[1em] overflow-x-hidden px-[50vw] py-5 whitespace-nowrap scroll-smooth select-none ${slideClass}`}>
               {renderedLineWords.map(({ word, flatIdx }, wi) => {
                 const isActive = wi === activeWordInLine
                 return (
                   <span
                     key={wi}
                     ref={isActive ? activeWordRef : null}
-                    className={`strip-word ${isActive ? 'strip-word--active' : ''}`}
+                    className={`inline-block font-semibold leading-[1.15] tracking-[0.01em] cursor-pointer transition-opacity duration-150 shrink-0 ${isActive ? 'opacity-100' : 'opacity-[0.18] hover:opacity-45'}`}
                     style={{ fontSize: `${focusPx}px`, fontFamily: activeFont.family, color: ink }}
                     onClick={() => setCurrentIndex(flatIdx)}
                   >
@@ -397,24 +396,24 @@ export default function App() {
             </div>
           </div>
 
-          <div className="strip-footer">
-            <button className="nav-btn nav-btn--strip" onClick={() => go(-1)} disabled={isFirst} aria-label="Previous word">
+          <div className="flex items-center justify-center gap-6 pt-3 pb-1">
+            <NavButton onClick={() => go(-1)} disabled={isFirst} aria-label="Previous word">
               <ChevronLeft />
-            </button>
-            <span className="focus-counter">{safeIndex + 1} / {totalWords}</span>
-            <button className="nav-btn nav-btn--strip" onClick={() => go(1)} disabled={isLast} aria-label="Next word">
+            </NavButton>
+            <span className="font-ui text-xs text-ink-light font-light tracking-[0.06em] min-w-[60px] text-center">{safeIndex + 1} / {totalWords}</span>
+            <NavButton onClick={() => go(1)} disabled={isLast} aria-label="Next word">
               <ChevronRight />
-            </button>
+            </NavButton>
           </div>
         </div>
       )}
 
       {/* ── Editor ── */}
-      <div className="editor-wrap">
-        <div className="editor-hint">
+      <div className="flex-1 flex flex-col gap-2.5 px-7 max-[600px]:px-3.5">
+        <div className="font-ui text-xs text-ink-light font-light tracking-[0.03em] pl-0.5">
           {totalWords === 0 ? 'Start typing to begin…' : 'Use ← → arrow keys or the buttons to navigate'}
         </div>
-        <div className="textarea-container">
+        <div className="border-[1.5px] border-brd rounded-xl bg-textarea-bg overflow-hidden shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-all duration-200 focus-within:border-accent-soft focus-within:shadow-[0_2px_12px_rgba(0,0,0,0.06),0_0_0_3px_var(--highlight)]">
           <HighlightedTextarea text={text} offset={offset} onChange={setText} textareaRef={textareaRef} inkColor={ink} />
         </div>
       </div>
@@ -422,13 +421,38 @@ export default function App() {
   )
 }
 
+// ─── Small UI helpers ────────────────────────────────────────────
+function SectionLabel({ children }) {
+  return <div className="text-[10px] font-medium tracking-[0.12em] uppercase text-ink-light mb-2.5">{children}</div>
+}
+function Divider() {
+  return <div className="border-t border-brd my-3.5" />
+}
+function SizeButton({ active, onClick, children }) {
+  return (
+    <button onClick={onClick}
+      className={`flex-1 py-1.5 rounded-lg border-[1.5px] font-ui text-xs font-medium cursor-pointer transition-all duration-150 text-center ${active ? 'bg-accent border-accent text-white font-semibold' : 'border-brd bg-bg text-ink-mid hover:border-accent-soft hover:bg-accent-pale hover:text-accent'}`}>
+      {children}
+    </button>
+  )
+}
+function NavButton({ onClick, disabled, children, ...rest }) {
+  return (
+    <button onClick={onClick} disabled={disabled} {...rest}
+      className="w-[52px] h-[52px] rounded-full border-[1.5px] border-brd bg-surface text-ink-mid cursor-pointer flex items-center justify-center shrink-0 transition-all duration-150 enabled:hover:bg-accent-pale enabled:hover:border-accent-soft enabled:hover:text-accent enabled:hover:scale-105 enabled:active:scale-95 disabled:opacity-25 disabled:cursor-default [&_svg]:w-[22px] [&_svg]:h-[22px] max-[600px]:w-16 max-[600px]:h-16 max-[600px]:[&_svg]:w-[26px] max-[600px]:[&_svg]:h-[26px]">
+      {children}
+    </button>
+  )
+}
+
 // ─── Toggle ──────────────────────────────────────────────────────
 function Toggle({ on, onToggle }) {
   return (
-    <div className={`toggle ${on ? 'on' : ''}`}
+    <div
       onClick={onToggle} role="switch" aria-checked={on} tabIndex={0}
-      onKeyDown={e => e.key === ' ' && onToggle()}>
-      <div className="toggle-thumb" />
+      onKeyDown={e => e.key === ' ' && onToggle()}
+      className={`w-10 h-[22px] rounded-full relative transition-colors duration-200 cursor-pointer shrink-0 ${on ? 'bg-accent' : 'bg-brd'}`}>
+      <div className={`absolute top-[3px] left-[3px] w-4 h-4 rounded-full bg-white shadow-[0_1px_4px_rgba(0,0,0,0.2)] transition-transform duration-200 ${on ? 'translate-x-[18px]' : ''}`} />
     </div>
   )
 }
@@ -437,10 +461,14 @@ function Toggle({ on, onToggle }) {
 function HighlightedTextarea({ text, offset, onChange, textareaRef, inkColor }) {
   const mirrorRef = useRef(null)
   const [highlightPos, setHighlightPos] = useState(null)
+  const [scrollTop, setScrollTop] = useState(0)
 
   const syncScroll = () => {
-    if (textareaRef.current && mirrorRef.current)
-      mirrorRef.current.scrollTop = textareaRef.current.scrollTop
+    if (textareaRef.current) {
+      const st = textareaRef.current.scrollTop
+      if (mirrorRef.current) mirrorRef.current.scrollTop = st
+      setScrollTop(st)
+    }
   }
 
   useEffect(() => {
@@ -458,41 +486,60 @@ function HighlightedTextarea({ text, offset, onChange, textareaRef, inkColor }) 
     mirror.appendChild(after)
     const wr = word.getBoundingClientRect()
     const mr = mirror.getBoundingClientRect()
-    setHighlightPos({ top: wr.top - mr.top, left: wr.left - mr.left, width: wr.width, height: wr.height })
+    const top = wr.top - mr.top
+    setHighlightPos({ top, left: wr.left - mr.left, width: wr.width, height: wr.height })
+
+    // Keep the highlighted word visible inside the textarea
+    const ta = textareaRef.current
+    if (ta) {
+      const margin = wr.height * 1.5 // keep a little breathing room above/below
+      const viewTop = ta.scrollTop
+      const viewBottom = viewTop + ta.clientHeight
+      if (top - margin < viewTop) {
+        ta.scrollTop = Math.max(0, top - margin)
+      } else if (top + wr.height + margin > viewBottom) {
+        ta.scrollTop = top + wr.height + margin - ta.clientHeight
+      }
+      // keep the mirror overlay in sync after programmatic scroll
+      if (mirrorRef.current) mirrorRef.current.scrollTop = ta.scrollTop
+      setScrollTop(ta.scrollTop)
+    }
   }, [text, offset])
 
+  // Shared typography for mirror + textarea — must match exactly for measurement
+  const sharedStyle = {
+    fontFamily: 'var(--font-active)',
+    fontSize: 'var(--body-size)',
+    lineHeight: 1.85,
+    letterSpacing: '0.01em',
+  }
+  const sharedCls = 'p-[20px_22px] w-full whitespace-pre-wrap break-words max-[600px]:p-[14px]'
+
   return (
-    <div className="textarea-inner">
-      <div ref={mirrorRef} className="textarea-mirror" aria-hidden="true" />
+    <div className="relative min-h-[220px]">
+      <div ref={mirrorRef} aria-hidden="true" style={sharedStyle}
+        className={`${sharedCls} absolute top-0 left-0 h-full pointer-events-none invisible text-transparent overflow-hidden border-none resize-none bg-transparent`} />
       {highlightPos && (
-        <div className="word-highlight" style={{
-          top: highlightPos.top, left: highlightPos.left,
+        <div className="absolute bg-highlight border-b-[2.5px] border-highlight-line rounded-[3px] pointer-events-none z-[1] transition-[top,left,width] duration-[120ms] ease-out" style={{
+          top: highlightPos.top - scrollTop, left: highlightPos.left,
           width: highlightPos.width, height: highlightPos.height,
         }} />
       )}
       <textarea
         ref={textareaRef}
-        className="textarea"
+        className={`${sharedCls} thin-scroll relative block bg-transparent border-none outline-none resize-y min-h-[220px] text-ink z-[2]`}
+        style={{ ...sharedStyle, color: inkColor, caretColor: 'var(--accent)' }}
         value={text}
         onChange={e => onChange(e.target.value)}
         onScroll={syncScroll}
         spellCheck={true}
         placeholder="Start typing your text here…"
-        style={{ color: inkColor }}
       />
     </div>
   )
 }
 
 // ─── Icons ───────────────────────────────────────────────────────
-function SettingsIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="10" cy="10" r="2.5" />
-      <path d="M10 3v1M10 16v1M3 10h1M16 10h1M5.05 5.05l.7.7M14.25 14.25l.7.7M14.95 5.05l-.7.7M5.75 14.25l-.7.7" />
-    </svg>
-  )
-}
 function ChevronLeft() {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
