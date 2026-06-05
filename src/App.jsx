@@ -19,11 +19,14 @@ const FOCUS_SIZES = [
 ]
 
 const BODY_SIZES = [
+  { label: 'XS', px: 11 },
   { label: 'S',  px: 14 },
   { label: 'M',  px: 17 },
   { label: 'L',  px: 20 },
   { label: 'XL', px: 24 },
 ]
+
+const WORDS_PER_FOCUS = [1, 2, 3, 4, 5]
 
 const THEMES = [
   {
@@ -152,6 +155,25 @@ function displayWord(word, hidePunct) {
   return hidePunct ? word.replace(/[^a-zA-Z0-9]/g, '') : word
 }
 
+/**
+ * Group flat word-indices into focus chunks of size `n`, never crossing a line.
+ * Returns an array of chunks; each chunk = { line, wordIdxs: number[] }
+ * where wordIdxs are flat indices into flatWords.
+ */
+function buildChunks(lines, lineStart, n) {
+  const chunks = []
+  lines.forEach((lineWords, li) => {
+    for (let i = 0; i < lineWords.length; i += n) {
+      const wordIdxs = []
+      for (let j = i; j < Math.min(i + n, lineWords.length); j++) {
+        wordIdxs.push(lineStart[li] + j)
+      }
+      chunks.push({ line: li, wordIdxs })
+    }
+  })
+  return chunks
+}
+
 function findTokenOffset(text, tokenIndex) {
   const tokens = []
   let i = 0
@@ -165,16 +187,61 @@ function findTokenOffset(text, tokenIndex) {
   return (tokenIndex >= 0 && tokenIndex < tokens.length) ? tokens[tokenIndex] : null
 }
 
+// Returns {start, end} char offsets spanning from the first to last token in a chunk
+function findChunkOffset(text, wordIdxs) {
+  if (!wordIdxs || wordIdxs.length === 0) return null
+  const first = findTokenOffset(text, wordIdxs[0])
+  const last  = findTokenOffset(text, wordIdxs[wordIdxs.length - 1])
+  if (!first || !last) return null
+  return { start: first.start, end: last.end }
+}
+
 // ─── App ─────────────────────────────────────────────────────────
+const STORAGE_KEY = 'reading-assistant-state'
+const DEFAULT_TEXT = "Hello! Paste a paragraph in the text field, and use the buttons or arrow keys to scroll through the text.\nDon't forget to check out the customization options in the top left!"
+
+// Load persisted state once (returns {} if none / unavailable)
+function loadSaved() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
 export default function App() {
-  const [text, setText]                 = useState("Hello! Paste a paragraph in the text field, and use the buttons or arrow keys to scroll through the text.\nDon't forget to check out the customization options in the top left!")
+  const saved = loadSaved()
+
+  const [text, setText]                 = useState(saved.text ?? DEFAULT_TEXT)
   const [currentIndex, setCurrentIndex] = useState(0)
-  const [hidePunct, setHidePunct]       = useState(false)
+  const [hidePunct, setHidePunct]       = useState(saved.hidePunct ?? false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [fontId, setFontId]             = useState('lexend')
-  const [focusSizeIdx, setFocusSizeIdx] = useState(1)
-  const [bodySizeIdx, setBodySizeIdx]   = useState(1)
-  const [themeId, setThemeId]           = useState('dark')
+  const [fontId, setFontId]             = useState(saved.fontId ?? 'lexend')
+  const [focusSizeIdx, setFocusSizeIdx] = useState(saved.focusSizeIdx ?? 1)
+  const [bodySizeIdx, setBodySizeIdx]   = useState(saved.bodySizeIdx ?? 2)
+  const [wordsPerFocus, setWordsPerFocus] = useState(saved.wordsPerFocus ?? 1)
+  const [themeId, setThemeId]           = useState(saved.themeId ?? 'dark')
+  const [ttsOn, setTtsOn]               = useState(saved.ttsOn ?? false)
+  const [ttsVolume, setTtsVolume]       = useState(saved.ttsVolume ?? 0.5)
+  const [ttsRate, setTtsRate]           = useState(saved.ttsRate ?? 1)
+  const [ttsPitch, setTtsPitch]         = useState(saved.ttsPitch ?? 1)
+  const [ttsVoiceURI, setTtsVoiceURI]   = useState(saved.ttsVoiceURI ?? '')
+  const [voices, setVoices]             = useState([])
+  const [ttsStatus, setTtsStatus]       = useState('')
+  const volRef = useRef(null)
+
+  // Persist settings + pasted text whenever any of them change
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        text, hidePunct, fontId, focusSizeIdx, bodySizeIdx, wordsPerFocus, themeId,
+        ttsOn, ttsVolume, ttsRate, ttsPitch, ttsVoiceURI,
+      }))
+    } catch {
+      /* storage unavailable — ignore */
+    }
+  }, [text, hidePunct, fontId, focusSizeIdx, bodySizeIdx, wordsPerFocus, themeId, ttsOn, ttsVolume, ttsRate, ttsPitch, ttsVoiceURI])
 
   // Animation key increments to retrigger CSS animation on line change
   const [animKey, setAnimKey]     = useState(0)
@@ -190,14 +257,68 @@ export default function App() {
 
   const parsed      = parseLines(text)
   const { flatWords, lineOf, lineStart, lines } = parsed
-  const totalWords  = flatWords.length
-  const safeIndex   = Math.min(currentIndex, Math.max(0, totalWords - 1))
   const activeFont  = FONTS.find(f => f.id === fontId) || FONTS[0]
   const activeTheme = THEMES.find(t => t.id === themeId) || THEMES[0]
   const focusPx     = FOCUS_SIZES[focusSizeIdx].px
   const bodyPx      = BODY_SIZES[bodySizeIdx].px
-  const currentLine = totalWords > 0 ? lineOf[safeIndex] : 0
   const ink         = activeTheme.vars['--ink']
+
+  // Group words into focus chunks (never crossing a line)
+  const chunks      = buildChunks(lines, lineStart, wordsPerFocus)
+  const totalChunks = chunks.length
+  const safeIndex   = Math.min(currentIndex, Math.max(0, totalChunks - 1))
+  const currentChunk = chunks[safeIndex] || { line: 0, wordIdxs: [] }
+  const currentLine = currentChunk.line
+
+  // Chunks belonging to the current line, in order, with their global chunk index
+  const lineChunks = chunks
+    .map((c, ci) => ({ ...c, chunkIdx: ci }))
+    .filter(c => c.line === currentLine)
+
+  // Text the current chunk represents (respects hide-punctuation)
+  const spokenText = currentChunk.wordIdxs
+    .map(wi => displayWord(flatWords[wi], hidePunct))
+    .join(' ')
+
+  // ── Load the list of available system voices ──
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return
+    const load = () => {
+      const list = window.speechSynthesis.getVoices() || []
+      setVoices(list)
+    }
+    load()
+    window.speechSynthesis.addEventListener('voiceschanged', load)
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', load)
+  }, [])
+
+  // ── Text to speech: speak the highlighted chunk when it changes ──
+  useEffect(() => {
+    if (!ttsOn) return
+    if (typeof window === 'undefined' || !window.speechSynthesis) return
+    if (!spokenText.trim()) return
+    const synth = window.speechSynthesis
+    synth.cancel() // drop anything mid-utterance so we always speak the latest
+    const utter = new SpeechSynthesisUtterance(spokenText)
+    const chosen = voices.find(v => v.voiceURI === ttsVoiceURI)
+    if (chosen) utter.voice = chosen
+    utter.volume = ttsVolume
+    utter.rate = ttsRate
+    utter.pitch = ttsPitch
+    utter.onerror = (e) => {
+      if (e.error && e.error !== 'interrupted' && e.error !== 'canceled') {
+        setTtsStatus(`Speech error: ${e.error}`)
+      }
+    }
+    synth.speak(utter)
+  }, [spokenText, ttsOn, ttsVolume, ttsRate, ttsPitch, ttsVoiceURI, voices])
+
+  // Stop speech immediately when TTS is switched off
+  useEffect(() => {
+    if (!ttsOn && typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel()
+    }
+  }, [ttsOn])
 
   // Apply theme vars to <html>
   useEffect(() => {
@@ -210,7 +331,7 @@ export default function App() {
     document.body.style.backgroundColor = activeTheme.vars['--bg']
   }, [activeTheme, activeFont, focusPx, bodyPx, ink])
 
-  // Vertical slide when line changes - content updates immediately, animation plays over it
+  // Vertical slide when line changes
   useEffect(() => {
     if (currentLine === prevLineRef.current) return
     const dir = currentLine > prevLineRef.current ? 'up' : 'down'
@@ -225,7 +346,7 @@ export default function App() {
     return () => clearTimeout(animTimerRef.current)
   }, [currentLine])
 
-  // Scroll active word to centre — wait for line transition to finish first
+  // Scroll active chunk to centre — wait for line transition to finish first
   useEffect(() => {
     if (isAnimating) return
     const scroller = scrollerRef.current
@@ -234,11 +355,26 @@ export default function App() {
     const centre = scroller.clientWidth / 2
     const wordCentre = activeEl.offsetLeft + activeEl.offsetWidth / 2
     scroller.scrollLeft = wordCentre - centre
-  }, [safeIndex, currentLine, focusSizeIdx, fontId, text, isAnimating])
+  }, [safeIndex, currentLine, focusSizeIdx, fontId, text, isAnimating, wordsPerFocus])
+
+  // Toggle TTS on/off.
+  const toggleTts = useCallback(() => {
+    const willEnable = !ttsOn
+    if (willEnable) {
+      if (typeof window === 'undefined' || !window.speechSynthesis) {
+        setTtsStatus('Speech synthesis is not supported in this browser.')
+        return
+      }
+      setTtsStatus('')
+    } else {
+      if (window.speechSynthesis) window.speechSynthesis.cancel()
+    }
+    setTtsOn(willEnable)
+  }, [ttsOn])
 
   const go = useCallback((dir) => {
-    setCurrentIndex(prev => Math.max(0, Math.min(totalWords - 1, prev + dir)))
-  }, [totalWords])
+    setCurrentIndex(prev => Math.max(0, Math.min(totalChunks - 1, prev + dir)))
+  }, [totalChunks])
 
   useEffect(() => {
     const handler = (e) => {
@@ -258,22 +394,35 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
+  // Clamp index when text or chunking changes
   useEffect(() => {
-    const newTotal = parseLines(text).flatWords.length
-    setCurrentIndex(prev => Math.min(prev, Math.max(0, newTotal - 1)))
-  }, [text])
+    const p = parseLines(text)
+    const nChunks = buildChunks(p.lines, p.lineStart, wordsPerFocus).length
+    setCurrentIndex(prev => Math.min(prev, Math.max(0, nChunks - 1)))
+  }, [text, wordsPerFocus])
 
-  const offset  = findTokenOffset(text, safeIndex)
+  const offset  = findChunkOffset(text, currentChunk.wordIdxs)
   const isFirst = safeIndex === 0
-  const isLast  = safeIndex >= totalWords - 1
+  const isLast  = safeIndex >= totalChunks - 1
 
-  // Always render currentLine's words immediately
-  const renderedLineWords = (lines[currentLine] || []).map((w, wi) => ({
-    word: w,
-    flatIdx: lineStart[currentLine] + wi,
-  }))
-
-  const activeWordInLine = safeIndex - lineStart[currentLine]
+  // Build a trimmed, prioritised voice list for the dropdown. Rendering hundreds
+  // of native <option>s is what lags the UI, so we surface the most relevant
+  // voices (matching the UI language first) and cap the total. The selected
+  // voice is always included even if it falls outside the cap.
+  const VOICE_LIMIT = 40
+  const voiceOptions = (() => {
+    if (voices.length <= VOICE_LIMIT) return voices
+    const uiLang = (typeof navigator !== 'undefined' && navigator.language || 'en').slice(0, 2).toLowerCase()
+    const matches = voices.filter(v => (v.lang || '').slice(0, 2).toLowerCase() === uiLang)
+    const others  = voices.filter(v => (v.lang || '').slice(0, 2).toLowerCase() !== uiLang)
+    const list = [...matches, ...others].slice(0, VOICE_LIMIT)
+    // Ensure the currently-selected voice is present
+    if (ttsVoiceURI && !list.some(v => v.voiceURI === ttsVoiceURI)) {
+      const sel = voices.find(v => v.voiceURI === ttsVoiceURI)
+      if (sel) list.unshift(sel)
+    }
+    return list
+  })()
 
   const slideClass = slideDir === 'up'   ? 'animate-slideInUp'
                    : slideDir === 'down' ? 'animate-slideInDown'
@@ -323,6 +472,15 @@ export default function App() {
 
             <Divider />
 
+            <SectionLabel>Words per focus</SectionLabel>
+            <div className="flex gap-1.5">
+              {WORDS_PER_FOCUS.map((n) => (
+                <SizeButton key={n} active={n === wordsPerFocus} onClick={() => setWordsPerFocus(n)}>{n}</SizeButton>
+              ))}
+            </div>
+
+            <Divider />
+
             <SectionLabel>Theme</SectionLabel>
             <div className="flex gap-2 mb-1.5">
               {THEMES.map(t => (
@@ -364,32 +522,114 @@ export default function App() {
         )}
       </div>
 
+      {/* ── TTS toggle + volume popout ── */}
+      <div className="group fixed top-[18px] left-[66px] z-[200]" ref={volRef}>
+        <button
+          className={`w-10 h-10 rounded-full border-[1.5px] cursor-pointer flex items-center justify-center transition-all duration-200 shadow-[0_2px_8px_rgba(0,0,0,0.1)] font-ui ${ttsOn ? 'border-accent-soft bg-accent-pale text-accent' : 'border-brd bg-surface text-ink-mid hover:border-accent-soft hover:bg-accent-pale'}`}
+          onClick={toggleTts}
+          aria-label={ttsOn ? 'Disable text to speech' : 'Enable text to speech'}
+          aria-pressed={ttsOn}
+        >
+          <span className="text-xl scale-x-[-1] inline-block leading-none">
+            {ttsOn ? '🕪' : '🕨'}
+          </span>
+        </button>
+
+        {/* When OFF: simple hover tooltip */}
+        {!ttsOn && (
+          <div className="absolute top-[calc(100%+8px)] left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-md bg-surface border-[1.5px] border-brd text-ink-mid text-xs font-ui whitespace-nowrap shadow-[0_4px_16px_rgba(0,0,0,0.2)] opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100">
+            Enable TTS
+          </div>
+        )}
+
+        {/* When ON: volume slider pops out on hover (no gap so cursor can reach it) */}
+        {ttsOn && (
+          <div className="absolute top-full left-0 pt-2 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
+            <div className="bg-surface border-[1.5px] border-brd rounded-xl p-3 shadow-[0_8px_32px_rgba(0,0,0,0.28)] font-ui w-[230px]">
+
+              <div className="flex items-center justify-between mb-2.5">
+                <span className="text-xs text-ink-mid">Text to Speech</span>
+                <span className="text-[10px] text-accent font-medium whitespace-nowrap">⚠ experimental</span>
+              </div>
+
+              {voices.length === 0 && (
+                <div className="mb-2.5 px-2 py-1.5 rounded-md bg-accent-pale text-accent text-[11px] leading-snug">
+                  No TTS voice found
+                </div>
+              )}
+
+              {/* Volume */}
+              <CommitSlider
+                label="Volume" value={ttsVolume} min={0} max={1} step={0.05}
+                format={v => `${Math.round(v * 100)}%`} onCommit={setTtsVolume} />
+
+              <div className="border-t border-brd my-3" />
+
+              {/* Voice selector */}
+              <div className="mb-1 text-xs text-ink-mid">Voice</div>
+              <select
+                value={ttsVoiceURI}
+                onChange={e => setTtsVoiceURI(e.target.value)}
+                disabled={voices.length === 0}
+                className="w-full px-2 py-1.5 rounded-lg border-[1.5px] border-brd bg-bg text-ink text-xs font-ui cursor-pointer disabled:opacity-50 disabled:cursor-default outline-none focus:border-accent-soft"
+                aria-label="TTS voice"
+              >
+                <option value="">Default</option>
+                {voiceOptions.map(v => (
+                  <option key={v.voiceURI} value={v.voiceURI}>
+                    {v.name}{v.lang ? ` (${v.lang})` : ''}
+                  </option>
+                ))}
+              </select>
+
+              <div className="border-t border-brd my-3" />
+
+              {/* Speed */}
+              <CommitSlider
+                label="Speed" value={ttsRate} min={0.5} max={2} step={0.1}
+                format={v => `${v.toFixed(1)}×`} onCommit={setTtsRate} />
+              <div className="h-3" />
+
+              {/* Pitch */}
+              <CommitSlider
+                label="Pitch" value={ttsPitch} min={0} max={2} step={0.1}
+                format={v => v.toFixed(1)} onCommit={setTtsPitch} />
+
+              {ttsStatus && (
+                <div className="mt-2 text-[10px] leading-snug text-accent">{ttsStatus}</div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* ── Word strip ── */}
-      {totalWords > 0 && (
+      {totalChunks > 0 && (
         <div className="relative w-screen left-1/2 -translate-x-1/2 mb-6 flex flex-col">
           <div className="absolute top-[3px] bottom-0 left-0 w-[22%] pointer-events-none z-[2] fade-left" />
           <div className="absolute top-[3px] bottom-0 right-0 w-[22%] pointer-events-none z-[2] fade-right" />
 
           <div className="w-full h-[3px] bg-brd shrink-0">
             <div className="h-full bg-accent rounded-r-sm transition-[width] duration-200 ease-out"
-              style={{ width: totalWords > 1 ? `${(safeIndex / (totalWords - 1)) * 100}%` : '100%' }} />
+              style={{ width: totalChunks > 1 ? `${(safeIndex / (totalChunks - 1)) * 100}%` : '100%' }} />
           </div>
 
           {/* clipping window — clips the vertical slide */}
           <div className="overflow-hidden">
             <div key={animKey} ref={scrollerRef}
               className={`flex flex-row items-center gap-[1em] overflow-x-hidden px-[50vw] py-5 whitespace-nowrap scroll-smooth select-none ${slideClass}`}>
-              {renderedLineWords.map(({ word, flatIdx }, wi) => {
-                const isActive = wi === activeWordInLine
+              {lineChunks.map((c) => {
+                const isActive = c.chunkIdx === safeIndex
+                const label = c.wordIdxs.map(wi => displayWord(flatWords[wi], hidePunct)).join(' ')
                 return (
                   <span
-                    key={wi}
+                    key={c.chunkIdx}
                     ref={isActive ? activeWordRef : null}
                     className={`inline-block font-semibold leading-[1.15] tracking-[0.01em] cursor-pointer transition-opacity duration-150 shrink-0 ${isActive ? 'opacity-100' : 'opacity-[0.18] hover:opacity-45'}`}
                     style={{ fontSize: `${focusPx}px`, fontFamily: activeFont.family, color: ink }}
-                    onClick={() => setCurrentIndex(flatIdx)}
+                    onClick={() => setCurrentIndex(c.chunkIdx)}
                   >
-                    {displayWord(word, hidePunct)}
+                    {label}
                   </span>
                 )
               })}
@@ -397,11 +637,11 @@ export default function App() {
           </div>
 
           <div className="flex items-center justify-center gap-6 pt-3 pb-1">
-            <NavButton onClick={() => go(-1)} disabled={isFirst} aria-label="Previous word">
+            <NavButton onClick={() => go(-1)} disabled={isFirst} aria-label="Previous">
               <ChevronLeft />
             </NavButton>
-            <span className="font-ui text-xs text-ink-light font-light tracking-[0.06em] min-w-[60px] text-center">{safeIndex + 1} / {totalWords}</span>
-            <NavButton onClick={() => go(1)} disabled={isLast} aria-label="Next word">
+            <span className="font-ui text-xs text-ink-light font-light tracking-[0.06em] min-w-[60px] text-center">{safeIndex + 1} / {totalChunks}</span>
+            <NavButton onClick={() => go(1)} disabled={isLast} aria-label="Next">
               <ChevronRight />
             </NavButton>
           </div>
@@ -411,7 +651,7 @@ export default function App() {
       {/* ── Editor ── */}
       <div className="flex-1 flex flex-col gap-2.5 px-7 max-[600px]:px-3.5">
         <div className="font-ui text-xs text-ink-light font-light tracking-[0.03em] pl-0.5">
-          {totalWords === 0 ? 'Start typing to begin…' : 'Use ← → arrow keys or the buttons to navigate'}
+          {totalChunks === 0 ? 'Start typing to begin…' : 'Use ← → arrow keys or the buttons to navigate'}
         </div>
         <div className="border-[1.5px] border-brd rounded-xl bg-textarea-bg overflow-hidden shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-all duration-200 focus-within:border-accent-soft focus-within:shadow-[0_2px_12px_rgba(0,0,0,0.06),0_0_0_3px_var(--highlight)]">
           <HighlightedTextarea text={text} offset={offset} onChange={setText} textareaRef={textareaRef} inkColor={ink} />
@@ -423,10 +663,36 @@ export default function App() {
 
 // ─── Small UI helpers ────────────────────────────────────────────
 function SectionLabel({ children }) {
-  return <div className="text-[10px] font-medium tracking-[0.12em] uppercase text-ink-light mb-2.5">{children}</div>
+  return <div className="text-sm font-medium tracking-[0.12em] uppercase text-ink-mid mb-2.5">{children}</div>
 }
 function Divider() {
   return <div className="border-t border-brd my-3.5" />
+}
+// Slider that updates its visual position live while dragging, but only
+// commits the value (via onCommit) when the user releases — so TTS isn't
+// retriggered on every intermediate value.
+function CommitSlider({ label, value, min, max, step, format, onCommit }) {
+  const [draft, setDraft] = useState(value)
+  // Keep draft in sync if the external value changes (e.g. loaded from storage)
+  useEffect(() => { setDraft(value) }, [value])
+  const commit = () => { if (draft !== value) onCommit(draft) }
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs text-ink-mid">{label}</span>
+        <span className="text-xs text-ink-light tabular-nums">{format(draft)}</span>
+      </div>
+      <input
+        type="range" min={min} max={max} step={step} value={draft}
+        onChange={e => setDraft(parseFloat(e.target.value))}
+        onPointerUp={commit}
+        onKeyUp={commit}
+        onBlur={commit}
+        className="w-full accent-[var(--accent)] cursor-pointer"
+        aria-label={label}
+      />
+    </div>
+  )
 }
 function SizeButton({ active, onClick, children }) {
   return (
@@ -460,7 +726,7 @@ function Toggle({ on, onToggle }) {
 // ─── Highlighted textarea ─────────────────────────────────────────
 function HighlightedTextarea({ text, offset, onChange, textareaRef, inkColor }) {
   const mirrorRef = useRef(null)
-  const [highlightPos, setHighlightPos] = useState(null)
+  const [rects, setRects] = useState([])      // highlight rectangles (content coords)
   const [scrollTop, setScrollTop] = useState(0)
 
   const syncScroll = () => {
@@ -472,38 +738,60 @@ function HighlightedTextarea({ text, offset, onChange, textareaRef, inkColor }) 
   }
 
   useEffect(() => {
-    if (!offset || !mirrorRef.current) { setHighlightPos(null); return }
     const mirror = mirrorRef.current
+    const ta = textareaRef.current
+    if (!offset || !mirror || !ta) { setRects([]); return }
+
+    // Build the mirror content with the highlighted span wrapped, so we can
+    // measure it. Reset mirror scroll to 0 so all measurements are in absolute
+    // content coordinates (independent of current scroll position).
+    mirror.scrollTop = 0
     mirror.innerHTML = ''
-    const before = document.createElement('span')
-    before.textContent = text.substring(0, offset.start)
+    const before = document.createTextNode(text.substring(0, offset.start))
     const word = document.createElement('span')
     word.textContent = text.substring(offset.start, offset.end)
-    const after = document.createElement('span')
-    after.textContent = text.substring(offset.end)
+    const after = document.createTextNode(text.substring(offset.end))
     mirror.appendChild(before)
     mirror.appendChild(word)
     mirror.appendChild(after)
-    const wr = word.getBoundingClientRect()
-    const mr = mirror.getBoundingClientRect()
-    const top = wr.top - mr.top
-    setHighlightPos({ top, left: wr.left - mr.left, width: wr.width, height: wr.height })
 
-    // Keep the highlighted word visible inside the textarea
-    const ta = textareaRef.current
-    if (ta) {
-      const margin = wr.height * 1.5 // keep a little breathing room above/below
-      const viewTop = ta.scrollTop
-      const viewBottom = viewTop + ta.clientHeight
-      if (top - margin < viewTop) {
-        ta.scrollTop = Math.max(0, top - margin)
-      } else if (top + wr.height + margin > viewBottom) {
-        ta.scrollTop = top + wr.height + margin - ta.clientHeight
-      }
-      // keep the mirror overlay in sync after programmatic scroll
-      if (mirrorRef.current) mirrorRef.current.scrollTop = ta.scrollTop
-      setScrollTop(ta.scrollTop)
+    const mr = mirror.getBoundingClientRect()
+    // getClientRects returns one rect per visual line the span occupies,
+    // so a span that wraps onto multiple lines becomes multiple rectangles.
+    const clientRects = Array.from(word.getClientRects())
+    const measured = clientRects.map(r => ({
+      top:    r.top  - mr.top,    // absolute content coords (mirror scroll is 0)
+      left:   r.left - mr.left,
+      width:  r.width,
+      height: r.height,
+    }))
+
+    if (measured.length === 0) { setRects([]); return }
+
+    // Auto-scroll so the highlighted span stays visible. Use the span's overall
+    // vertical bounds (first rect top → last rect bottom).
+    const spanTop    = measured[0].top
+    const spanBottom = measured[measured.length - 1].top + measured[measured.length - 1].height
+    const margin     = measured[0].height * 1.0
+    const viewTop    = ta.scrollTop
+    const viewBottom = viewTop + ta.clientHeight
+
+    let nextScroll = ta.scrollTop
+    if (spanTop - margin < viewTop) {
+      nextScroll = Math.max(0, spanTop - margin)
+    } else if (spanBottom + margin > viewBottom) {
+      nextScroll = spanBottom + margin - ta.clientHeight
     }
+
+    if (nextScroll !== ta.scrollTop) {
+      ta.scrollTop = nextScroll
+      mirror.scrollTop = nextScroll
+    }
+
+    // Commit rects and the final scroll position together, so the overlay is
+    // never rendered against a stale scroll value (fixes the misalignment).
+    setRects(measured)
+    setScrollTop(ta.scrollTop)
   }, [text, offset])
 
   // Shared typography for mirror + textarea — must match exactly for measurement
@@ -519,12 +807,11 @@ function HighlightedTextarea({ text, offset, onChange, textareaRef, inkColor }) 
     <div className="relative min-h-[220px]">
       <div ref={mirrorRef} aria-hidden="true" style={sharedStyle}
         className={`${sharedCls} absolute top-0 left-0 h-full pointer-events-none invisible text-transparent overflow-hidden border-none resize-none bg-transparent`} />
-      {highlightPos && (
-        <div className="absolute bg-highlight border-b-[2.5px] border-highlight-line rounded-[3px] pointer-events-none z-[1] transition-[top,left,width] duration-[120ms] ease-out" style={{
-          top: highlightPos.top - scrollTop, left: highlightPos.left,
-          width: highlightPos.width, height: highlightPos.height,
-        }} />
-      )}
+      {rects.map((r, i) => (
+        <div key={i}
+          className="absolute bg-highlight border-b-[2.5px] border-highlight-line rounded-[3px] pointer-events-none z-[1] transition-[top,left,width] duration-[120ms] ease-out"
+          style={{ top: r.top - scrollTop, left: r.left, width: r.width, height: r.height }} />
+      ))}
       <textarea
         ref={textareaRef}
         className={`${sharedCls} thin-scroll relative block bg-transparent border-none outline-none resize-y min-h-[220px] text-ink z-[2]`}
