@@ -12,6 +12,7 @@ const FONTS = [
 ]
 
 const FOCUS_SIZES = [
+  { label: 'XS', px: 32  },
   { label: 'S',  px: 48  },
   { label: 'M',  px: 72  },
   { label: 'L',  px: 108 },
@@ -204,10 +205,28 @@ const DEFAULT_TEXT = "Hello! Paste a paragraph in the text field, and use the bu
 function loadSaved() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : {}
+    const s = raw ? JSON.parse(raw) : {}
+    // Migration: XS was prepended to FOCUS_SIZES, shifting every index by 1.
+    // Bump old saved focus indices once so they still point at the same size.
+    if (s && s.focusSizeIdx != null && s._focusV !== 2) {
+      s.focusSizeIdx = s.focusSizeIdx + 1
+      s._focusV = 2
+    }
+    return s
   } catch {
     return {}
   }
+}
+
+// Pick an initial focus size based on screen width, but only when the user
+// has no saved preference (never overwrite a saved setting).
+function initialFocusSizeIdx(saved) {
+  if (saved.focusSizeIdx != null) return saved.focusSizeIdx
+  if (typeof window !== 'undefined') {
+    if (window.innerWidth < 350) return 0 // XS
+    if (window.innerWidth < 500) return 1 // S
+  }
+  return 2 // M (default)
 }
 
 export default function App() {
@@ -218,7 +237,7 @@ export default function App() {
   const [hidePunct, setHidePunct]       = useState(saved.hidePunct ?? false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [fontId, setFontId]             = useState(saved.fontId ?? 'lexend')
-  const [focusSizeIdx, setFocusSizeIdx] = useState(saved.focusSizeIdx ?? 1)
+  const [focusSizeIdx, setFocusSizeIdx] = useState(initialFocusSizeIdx(saved))
   const [bodySizeIdx, setBodySizeIdx]   = useState(saved.bodySizeIdx ?? 2)
   const [wordsPerFocus, setWordsPerFocus] = useState(saved.wordsPerFocus ?? 1)
   const [themeId, setThemeId]           = useState(saved.themeId ?? 'dark')
@@ -236,7 +255,7 @@ export default function App() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         text, hidePunct, fontId, focusSizeIdx, bodySizeIdx, wordsPerFocus, themeId,
-        ttsOn, ttsVolume, ttsRate, ttsPitch, ttsVoiceURI,
+        ttsOn, ttsVolume, ttsRate, ttsPitch, ttsVoiceURI, _focusV: 2,
       }))
     } catch {
       /* storage unavailable — ignore */
@@ -429,22 +448,29 @@ export default function App() {
                    : ''
 
   return (
-    <div className="max-w-[740px] mx-auto pt-12 pb-[60px] min-h-screen flex flex-col max-[600px]:pt-5 max-[600px]:pb-10">
+    <div className="max-w-[740px] mx-auto pt-4 pb-[60px] min-h-screen flex flex-col max-[600px]:pt-3">
 
-      {/* ── Settings ── */}
-      <div className="fixed top-[18px] left-[18px] z-[200]" ref={settingsRef}>
-        <button
-          className="group w-10 h-10 rounded-full border-[1.5px] border-brd bg-surface text-ink-mid cursor-pointer flex items-center justify-center transition-all duration-200 shadow-[0_2px_8px_rgba(0,0,0,0.1)] font-ui hover:border-accent-soft hover:bg-accent-pale"
-          onClick={() => setSettingsOpen(v => !v)}
-          aria-label="Settings"
-        >
-          <span className={`transition-transform duration-300 text-2xl group-hover:rotate-45 group-hover:text-accent ${settingsOpen ? 'rotate-45 text-accent' : ''}`}>
-            ⚙
-          </span>
-        </button>
+      {/* ── Header row: buttons left, title right (full-width, in DOM flow) ── */}
+      <div className="w-screen left-1/2 -translate-x-1/2 relative flex items-center justify-between px-[18px] mb-4 max-[600px]:mb-3 z-[999]">
 
-        {settingsOpen && (
-          <div className="absolute top-[calc(100%+10px)] left-0 bg-surface border-[1.5px] border-brd rounded-xl p-[16px_18px_18px] w-[260px] shadow-[0_8px_32px_rgba(0,0,0,0.28)] animate-popIn font-ui max-h-[calc(100vh-80px)] overflow-y-auto tiny-scroll max-[600px]:w-[calc(100vw-36px)] max-[600px]:max-w-[320px]">
+        {/* left: settings + tts buttons */}
+        <div className="flex items-center gap-2">
+
+          {/* ── Settings ── */}
+          <div className="relative z-[200]" ref={settingsRef}>
+            <button
+              className="group w-10 h-10 rounded-full border-[1.5px] border-brd bg-surface text-ink-mid cursor-pointer flex items-center justify-center transition-all duration-200 shadow-[0_2px_8px_rgba(0,0,0,0.1)] font-ui hover:border-accent-soft hover:bg-accent-pale"
+              onClick={() => setSettingsOpen(v => !v)}
+              aria-label="Settings"
+            >
+              <span className={`transition-transform duration-300 text-2xl group-hover:rotate-45 group-hover:text-accent ${settingsOpen ? 'rotate-45 text-accent' : ''}`}>
+                ⚙
+              </span>
+            </button>
+
+            {settingsOpen && (
+              <div className="absolute top-[calc(100%+10px)] left-0 bg-surface border-[1.5px] border-brd rounded-xl p-[16px_18px_18px] w-[260px] shadow-[0_8px_32px_rgba(0,0,0,0.28)] animate-popIn font-ui max-h-[calc(100vh-80px)] overflow-y-auto tiny-scroll max-[600px]:w-[calc(100vw-36px)] max-[600px]:max-w-[320px]">
+
 
             <SectionLabel>Display</SectionLabel>
             <label className="flex items-center justify-between gap-3 cursor-pointer text-sm text-ink-mid">
@@ -522,18 +548,18 @@ export default function App() {
         )}
       </div>
 
-      {/* ── TTS toggle + volume popout ── */}
-      <div className="group fixed top-[18px] left-[66px] z-[200]" ref={volRef}>
-        <button
-          className={`w-10 h-10 rounded-full border-[1.5px] cursor-pointer flex items-center justify-center transition-all duration-200 shadow-[0_2px_8px_rgba(0,0,0,0.1)] font-ui ${ttsOn ? 'border-accent-soft bg-accent-pale text-accent' : 'border-brd bg-surface text-ink-mid hover:border-accent-soft hover:bg-accent-pale'}`}
-          onClick={toggleTts}
-          aria-label={ttsOn ? 'Disable text to speech' : 'Enable text to speech'}
-          aria-pressed={ttsOn}
-        >
-          <span className="text-xl scale-x-[-1] inline-block leading-none">
-            {ttsOn ? '🕪' : '🕨'}
-          </span>
-        </button>
+          {/* ── TTS toggle + volume popout ── */}
+          <div className="group relative z-[200]" ref={volRef}>
+            <button
+              className={`w-10 h-10 rounded-full border-[1.5px] cursor-pointer flex items-center justify-center transition-all duration-200 shadow-[0_2px_8px_rgba(0,0,0,0.1)] font-ui ${ttsOn ? 'border-accent-soft bg-accent-pale text-accent' : 'border-brd bg-surface text-ink-mid hover:border-accent-soft hover:bg-accent-pale'}`}
+              onClick={toggleTts}
+              aria-label={ttsOn ? 'Disable text to speech' : 'Enable text to speech'}
+              aria-pressed={ttsOn}
+            >
+              <span className="text-xl scale-x-[-1] inline-block leading-none">
+                {ttsOn ? '🕪' : '🕨'}
+              </span>
+            </button>
 
         {/* When OFF: simple hover tooltip */}
         {!ttsOn && (
@@ -601,6 +627,11 @@ export default function App() {
             </div>
           </div>
         )}
+          </div>
+        </div>
+
+        {/* right: page title */}
+        <span className="font-ui text-lg text-ink-light tracking-[0.04em] select-none">Reading Assistant</span>
       </div>
 
       {/* ── Word strip ── */}
@@ -640,7 +671,7 @@ export default function App() {
             <NavButton onClick={() => go(-1)} disabled={isFirst} aria-label="Previous">
               <ChevronLeft />
             </NavButton>
-            <span className="font-ui text-xs text-ink-light font-light tracking-[0.06em] min-w-[60px] text-center">{safeIndex + 1} / {totalChunks}</span>
+            <span className="font-ui text-sm text-ink-mid font-normal tracking-[0.06em] min-w-[60px] text-center">{safeIndex + 1} / {totalChunks}</span>
             <NavButton onClick={() => go(1)} disabled={isLast} aria-label="Next">
               <ChevronRight />
             </NavButton>
@@ -649,14 +680,24 @@ export default function App() {
       )}
 
       {/* ── Editor ── */}
-      <div className="flex-1 flex flex-col gap-2.5 px-7 max-[600px]:px-3.5">
+      <div className="flex-1 flex flex-col gap-2.5 px-7 pb-2 max-[600px]:px-3.5 min-h-[260px]">
         <div className="font-ui text-xs text-ink-light font-light tracking-[0.03em] pl-0.5">
           {totalChunks === 0 ? 'Start typing to begin…' : 'Use ← → arrow keys or the buttons to navigate'}
         </div>
-        <div className="border-[1.5px] border-brd rounded-xl bg-textarea-bg overflow-hidden shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-all duration-200 focus-within:border-accent-soft focus-within:shadow-[0_2px_12px_rgba(0,0,0,0.06),0_0_0_3px_var(--highlight)]">
+        <div className="flex-1 flex flex-col border-[1.5px] border-brd rounded-xl bg-textarea-bg overflow-hidden shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-all duration-200 focus-within:border-accent-soft focus-within:shadow-[0_2px_12px_rgba(0,0,0,0.06),0_0_0_3px_var(--highlight)]">
           <HighlightedTextarea text={text} offset={offset} onChange={setText} textareaRef={textareaRef} inkColor={ink} />
         </div>
       </div>
+
+      {/* ── Made by Dave ── */}
+      <a
+        href="https://turnbullcreative.com/"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="fixed bottom-[14px] left-[18px] z-[200] font-ui text-xs text-ink-light hover:text-accent transition-colors duration-150"
+      >
+        Made by Dave
+      </a>
     </div>
   )
 }
@@ -804,7 +845,7 @@ function HighlightedTextarea({ text, offset, onChange, textareaRef, inkColor }) 
   const sharedCls = 'p-[20px_22px] w-full whitespace-pre-wrap break-words max-[600px]:p-[14px]'
 
   return (
-    <div className="relative min-h-[220px]">
+    <div className="relative flex-1 flex flex-col min-h-[220px]">
       <div ref={mirrorRef} aria-hidden="true" style={sharedStyle}
         className={`${sharedCls} absolute top-0 left-0 h-full pointer-events-none invisible text-transparent overflow-hidden border-none resize-none bg-transparent`} />
       {rects.map((r, i) => (
@@ -814,7 +855,7 @@ function HighlightedTextarea({ text, offset, onChange, textareaRef, inkColor }) 
       ))}
       <textarea
         ref={textareaRef}
-        className={`${sharedCls} thin-scroll relative block bg-transparent border-none outline-none resize-y min-h-[220px] text-ink z-[2]`}
+        className={`${sharedCls} thin-scroll relative block flex-1 bg-transparent border-none outline-none resize-none min-h-[220px] text-ink z-[2]`}
         style={{ ...sharedStyle, color: inkColor, caretColor: 'var(--accent)' }}
         value={text}
         onChange={e => onChange(e.target.value)}
